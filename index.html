@@ -835,13 +835,13 @@ const track = document.getElementById('marqueeTrack');
 const doubled = [...allAffirmations, ...allAffirmations];
 track.innerHTML = doubled.map(t => `<span>${t}</span>`).join('');
 
-/* ---------- STORAGE HELPERS (with in-memory safety net) ---------- */
-const memoryCache = {}; // keeps data safe in this session even if the storage backend hiccups
+/* ---------- STORAGE HELPERS (localStorage — persists on the real deployed site) ---------- */
+const memoryCache = {}; // keeps data safe in this session even if storage is unavailable (e.g. private browsing)
 
 async function storageGet(key){
   try{
-    const r = await window.storage.get(key);
-    const parsed = r ? JSON.parse(r.value) : null;
+    const raw = localStorage.getItem(key);
+    const parsed = raw !== null ? JSON.parse(raw) : null;
     if(parsed !== null) memoryCache[key] = parsed;
     return parsed;
   }catch(e){
@@ -849,17 +849,11 @@ async function storageGet(key){
   }
 }
 async function storageSet(key, value){
-  memoryCache[key] = value; // save locally first, so nothing is lost even if the network call fails
+  memoryCache[key] = value; // save in-memory first, so nothing is lost even if localStorage fails
   try{
-    await window.storage.set(key, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(value));
   }catch(e){
-    // retry once after a short delay
-    try{
-      await new Promise(res => setTimeout(res, 900));
-      await window.storage.set(key, JSON.stringify(value));
-    }catch(e2){
-      console.error('Storage save failed, kept safely in this session only:', e2);
-    }
+    console.error('Storage save failed, kept safely in this session only:', e);
   }
 }
 
