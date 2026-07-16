@@ -195,17 +195,38 @@
   .task-row{ display:flex; align-items:center; gap:14px; padding: 14px 6px; border-bottom:1px solid var(--line); cursor:pointer; user-select:none; }
   .task-row:last-child{ border-bottom:none; }
   .check{
-    width:22px; height:22px; border-radius:50%; border:1.5px solid var(--muted); flex-shrink:0;
+    width:22px; height:22px; border-radius:50%; border:1.5px solid var(--muted); flex-shrink:0; position:relative;
     display:flex; align-items:center; justify-content:center; transition: all .3s ease;
   }
-  .check svg{ width:12px; height:12px; opacity:0; transition:opacity .2s ease; }
-  .task-row.done .check{ background: var(--marigold); border-color: var(--marigold); }
-  .task-row.done .check svg{ opacity:1; }
+  .check svg{ position:absolute; width:12px; height:12px; opacity:0; transition:opacity .2s ease; }
+  .check.is-done{ background: var(--marigold); border-color: var(--marigold); }
+  .check.is-done .icon-check{ opacity:1; }
+  .check.is-missed{ background: var(--rose); border-color: var(--rose); }
+  .check.is-missed .icon-cross{ opacity:1; }
   .task-row.done .task-label{ color: var(--muted); text-decoration: line-through; text-decoration-color: var(--marigold); }
+  .task-row.missed .task-label{ color: var(--rose); }
   .task-label{ font-size:15.5px; flex:1; transition: color .3s ease; }
+  .task-pct{ font-family:'JetBrains Mono', monospace; font-size:11px; color: var(--sage); min-width:36px; text-align:right; }
+  .task-cal-btn{ font-size:14px; opacity:.55; cursor:pointer; padding:0 4px; transition:opacity .2s; }
+  .task-cal-btn:hover{ opacity:1; }
   .task-remove{ font-family:'JetBrains Mono',monospace; color:var(--muted); font-size:16px; opacity:0; transition:opacity .2s; padding:0 6px;}
   .task-row:hover .task-remove{ opacity:.6; }
   .task-remove:hover{ opacity:1 !important; color:var(--rose); }
+
+  /* PER-HABIT CALENDAR */
+  .habit-calendar{ background:rgba(0,0,0,0.18); border:1px solid var(--line); border-radius:12px; padding:16px; margin:4px 0 14px; cursor:default; }
+  .cal-month{ margin-bottom:16px; }
+  .cal-month:last-of-type{ margin-bottom:8px; }
+  .cal-month-label{ font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin-bottom:8px; }
+  .cal-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(26px,1fr)); gap:4px; }
+  .cal-cell{ aspect-ratio:1; display:flex; align-items:center; justify-content:center; font-family:'JetBrains Mono',monospace; font-size:9.5px; border-radius:5px; background:rgba(255,255,255,0.06); color:var(--muted); cursor:pointer; transition:transform .15s ease; }
+  .cal-cell:hover{ transform:scale(1.15); }
+  .cal-cell.done{ background:var(--marigold); color:#150F26; font-weight:700; }
+  .cal-cell.missed{ background:var(--rose); color:#150F26; font-weight:700; }
+  .cal-cell.future{ opacity:.28; cursor:default; }
+  .cal-cell.future:hover{ transform:none; }
+  .cal-close{ text-align:center; margin-top:8px; font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1px; color:var(--muted); cursor:pointer; }
+  .cal-close:hover{ color:var(--marigold-soft); }
 
   .add-task{ display:flex; gap:10px; margin-top:18px; }
   .add-task input{
@@ -842,88 +863,216 @@ async function storageSet(key, value){
   }
 }
 
-/* ---------- TASK TRACKER ---------- */
-const DEFAULT_TASKS = [
-  { id: 't1', label: 'Daily walk / steps', done: false },
-  { id: 't2', label: 'Chanting / mantra', done: false },
-  { id: 't3', label: 'Water intake', done: false },
-  { id: 't4', label: 'Gym / workout', done: false },
-  { id: 't5', label: 'Reading / study', done: false },
-  { id: 't6', label: 'Meditation', done: false },
+/* ---------- TASK TRACKER (persistent habits + full daily history) ---------- */
+const DEFAULT_HABITS = [
+  { id: 'h1', label: 'Daily walk / steps' },
+  { id: 'h2', label: 'Chanting / mantra' },
+  { id: 'h3', label: 'Water intake' },
+  { id: 'h4', label: 'Gym / workout' },
+  { id: 'h5', label: 'Reading / study' },
+  { id: 'h6', label: 'Meditation' },
 ];
-function todayKey(){ const d = new Date(); return `tasks:${d.getFullYear()}-${d.getMonth()+1}-${d.getDate()}`; }
-let tasks = [];
+function dKey(date){ return `${date.getFullYear()}-${date.getMonth()+1}-${date.getDate()}`; }
+function todayKey(){ return dKey(new Date()); }
+function stripTime(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+
+let habits = [];        // [{id, label, start:'Y-M-D'}] — persistent, doesn't reset daily
+let habitLogs = {};     // { [habitId]: { 'Y-M-D': 'done' | 'missed' } } — full history
+let tasks = [];         // derived, today-only snapshot (kept for the constellation view)
+let openCalendarId = null;
+
 async function loadTasks(){
-  const saved = await storageGet(todayKey());
-  tasks = saved || DEFAULT_TASKS.map(t => ({...t}));
+  habits = await storageGet('habits');
+  if(!habits){
+    habits = DEFAULT_HABITS.map(h => ({ ...h, start: todayKey() }));
+    await storageSet('habits', habits);
+  }
+  habitLogs = {};
+  for(const h of habits){
+    habitLogs[h.id] = (await storageGet('habitlog:' + h.id)) || {};
+  }
   renderTasks();
 }
+
+function syncTodayView(){
+  const key = todayKey();
+  tasks = habits.map(h => ({ id: h.id, label: h.label, done: (habitLogs[h.id] || {})[key] === 'done' }));
+}
+
+function cycleNext(current){
+  if(current === undefined) return 'done';
+  if(current === 'done') return 'missed';
+  return undefined;
+}
+
+async function setHabitStatus(id, dateKeyStr, status){
+  const log = habitLogs[id] || (habitLogs[id] = {});
+  if(status === undefined) delete log[dateKeyStr];
+  else log[dateKeyStr] = status;
+  await storageSet('habitlog:' + id, log);
+  renderTasks();
+}
+
+async function cycleHabitToday(id){
+  await setHabitStatus(id, todayKey(), cycleNext((habitLogs[id] || {})[todayKey()]));
+}
+
+function habitPercent(h){
+  const [sy, sm, sd] = h.start.split('-').map(Number);
+  const start = stripTime(new Date(sy, sm - 1, sd));
+  const today = stripTime(new Date());
+  const totalDays = Math.max(1, Math.round((today - start) / 86400000) + 1);
+  const log = habitLogs[h.id] || {};
+  const doneCount = Object.values(log).filter(v => v === 'done').length;
+  return Math.round((doneCount / totalDays) * 100);
+}
+
 function renderTasks(){
+  syncTodayView();
   const list = document.getElementById('taskList');
   list.innerHTML = '';
-  tasks.forEach(task=>{
+  const key = todayKey();
+
+  habits.forEach(h=>{
+    const status = (habitLogs[h.id] || {})[key];
+    const pct = habitPercent(h);
+
     const row = document.createElement('div');
-    row.className = 'task-row' + (task.done ? ' done' : '');
+    row.className = 'task-row' + (status === 'done' ? ' done' : '') + (status === 'missed' ? ' missed' : '');
     row.innerHTML = `
-      <div class="check"><svg viewBox="0 0 24 24" fill="none" stroke="#150F26" stroke-width="3"><path d="M4 12l6 6L20 6"/></svg></div>
-      <div class="task-label">${task.label}</div>
-      <div class="task-remove" data-id="${task.id}">✕</div>`;
-    row.querySelector('.check').addEventListener('click', ()=> toggleTask(task.id));
-    row.querySelector('.task-label').addEventListener('click', ()=> toggleTask(task.id));
-    row.querySelector('.task-remove').addEventListener('click', (e)=>{ e.stopPropagation(); removeTask(task.id); });
+      <div class="check ${status === 'done' ? 'is-done' : ''} ${status === 'missed' ? 'is-missed' : ''}">
+        <svg class="icon-check" viewBox="0 0 24 24" fill="none" stroke="#150F26" stroke-width="3"><path d="M4 12l6 6L20 6"/></svg>
+        <svg class="icon-cross" viewBox="0 0 24 24" fill="none" stroke="#150F26" stroke-width="3"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </div>
+      <div class="task-label">${h.label}</div>
+      <div class="task-pct">${pct}%</div>
+      <div class="task-cal-btn" title="View calendar">📅</div>
+      <div class="task-remove" data-id="${h.id}">✕</div>`;
+    row.querySelector('.check').addEventListener('click', (e)=>{ e.stopPropagation(); cycleHabitToday(h.id); });
+    row.querySelector('.task-label').addEventListener('click', ()=> cycleHabitToday(h.id));
+    row.querySelector('.task-cal-btn').addEventListener('click', (e)=>{ e.stopPropagation(); toggleCalendar(h.id); });
+    row.querySelector('.task-remove').addEventListener('click', (e)=>{ e.stopPropagation(); removeTask(h.id); });
     list.appendChild(row);
+
+    if(openCalendarId === h.id){
+      list.appendChild(buildCalendar(h));
+    }
   });
+
   renderConstellation();
   renderStreak();
   updateStreakDisplay();
 }
-async function toggleTask(id){
-  tasks = tasks.map(t => t.id === id ? {...t, done: !t.done} : t);
-  await storageSet(todayKey(), tasks);
-  renderTasks();
-}
+
 async function removeTask(id){
-  tasks = tasks.filter(t => t.id !== id);
-  await storageSet(todayKey(), tasks);
+  habits = habits.filter(h => h.id !== id);
+  await storageSet('habits', habits);
+  if(openCalendarId === id) openCalendarId = null;
   renderTasks();
 }
+
 document.getElementById('addTaskBtn').addEventListener('click', addTask);
 document.getElementById('newTaskInput').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') addTask(); });
 async function addTask(){
   const input = document.getElementById('newTaskInput');
   const val = input.value.trim();
   if(!val) return;
-  tasks.push({ id: 't' + Date.now(), label: val, done:false });
+  const id = 'h' + Date.now();
+  habits.push({ id, label: val, start: todayKey() });
+  habitLogs[id] = {};
+  await storageSet('habits', habits);
+  await storageSet('habitlog:' + id, {});
   input.value = '';
-  await storageSet(todayKey(), tasks);
   renderTasks();
 }
+
 function renderStreak(){
-  const done = tasks.filter(t=>t.done).length;
-  const total = tasks.length;
+  const key = todayKey();
+  const done = habits.filter(h => (habitLogs[h.id] || {})[key] === 'done').length;
+  const total = habits.length;
   const line = document.getElementById('streakLine');
   if(total === 0){ line.textContent = 'Add your first habit above ✦'; return; }
   line.innerHTML = `<span>${done}/${total}</span> completed today`;
 }
-/* ---------- DAY STREAK (consecutive days consistent) ---------- */
-function dateKeyFor(date){ return `tasks:${date.getFullYear()}-${date.getMonth()+1}-${date.getDate()}`; }
-async function wasConsistent(date){
-  const dayTasks = await storageGet(dateKeyFor(date));
-  if(!dayTasks || !dayTasks.length) return false;
-  return dayTasks.every(t => t.done);
+
+/* ---------- Per-habit calendar (tick ✓ / cross ✗ per day, like a habit chart) ---------- */
+function toggleCalendar(id){
+  openCalendarId = (openCalendarId === id) ? null : id;
+  renderTasks();
+}
+function buildCalendar(h){
+  const wrap = document.createElement('div');
+  wrap.className = 'habit-calendar';
+
+  const [sy, sm, sd] = h.start.split('-').map(Number);
+  const start = stripTime(new Date(sy, sm - 1, sd));
+  const today = stripTime(new Date());
+  const end = new Date(today); end.setMonth(end.getMonth() + 30); // renders boxes out to ~Jan 2029
+
+  const log = habitLogs[h.id] || {};
+  let cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+  const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
+
+  while(cursor <= endMonth){
+    const monthBlock = document.createElement('div');
+    monthBlock.className = 'cal-month';
+    const label = document.createElement('div');
+    label.className = 'cal-month-label';
+    label.textContent = cursor.toLocaleDateString('en-US', { month:'short', year:'numeric' });
+    monthBlock.appendChild(label);
+
+    const grid = document.createElement('div');
+    grid.className = 'cal-grid';
+    const daysInMonth = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0).getDate();
+
+    for(let day = 1; day <= daysInMonth; day++){
+      const d = new Date(cursor.getFullYear(), cursor.getMonth(), day);
+      if(d < start || d > end) continue;
+      const key = dKey(d);
+      const isFuture = d > today;
+      const status = log[key];
+      const cell = document.createElement('div');
+      cell.className = 'cal-cell' + (isFuture ? ' future' : '') + (status === 'done' ? ' done' : '') + (status === 'missed' ? ' missed' : '');
+      cell.textContent = day;
+      cell.title = key;
+      if(!isFuture){
+        cell.addEventListener('click', ()=> setHabitStatus(h.id, key, cycleNext(status)));
+      }
+      grid.appendChild(cell);
+    }
+    monthBlock.appendChild(grid);
+    wrap.appendChild(monthBlock);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  const closeBtn = document.createElement('div');
+  closeBtn.className = 'cal-close';
+  closeBtn.textContent = 'Close calendar ▲';
+  closeBtn.addEventListener('click', ()=> toggleCalendar(h.id));
+  wrap.appendChild(closeBtn);
+
+  return wrap;
+}
+
+/* ---------- DAY STREAK (consecutive days, all habits done — uses in-memory history) ---------- */
+function wasConsistentSync(date){
+  const key = dKey(date);
+  const activeHabits = habits.filter(h=>{
+    const [sy, sm, sd] = h.start.split('-').map(Number);
+    return stripTime(new Date(sy, sm - 1, sd)) <= stripTime(date);
+  });
+  if(activeHabits.length === 0) return false;
+  return activeHabits.every(h => (habitLogs[h.id] || {})[key] === 'done');
 }
 async function computeStreak(){
   let streak = 0;
   const today = new Date();
-
-  const todayDone = await wasConsistent(today);
-  if(todayDone) streak++;
+  if(wasConsistentSync(today)) streak++;
 
   const cursor = new Date(today);
   cursor.setDate(cursor.getDate() - 1);
   for(let i = 0; i < 3650; i++){
-    const consistent = await wasConsistent(cursor);
-    if(!consistent) break;
+    if(!wasConsistentSync(cursor)) break;
     streak++;
     cursor.setDate(cursor.getDate() - 1);
   }
