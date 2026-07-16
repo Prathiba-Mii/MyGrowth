@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -399,9 +398,38 @@
     .contact-seal{ width:46px; height:46px; font-size:18px; }
   }
   @media (prefers-reduced-motion: reduce){ *{ animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+
+  /* PASSWORD LOCK SCREEN */
+  #lockScreen{
+    position:fixed; inset:0; z-index:9999; background: var(--bg-void);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:20px; padding:24px; text-align:center;
+  }
+  #lockScreen .lock-star{ font-size:34px; filter: drop-shadow(0 0 14px rgba(232,169,76,0.5)); }
+  #lockScreen h2{ font-family:'Cormorant Garamond', serif; font-size:26px; color:var(--cream); font-weight:500; }
+  #lockScreen p{ font-family:'Work Sans', sans-serif; font-size:13px; color:var(--muted); max-width:280px; }
+  #lockInput{
+    width:100%; max-width:280px; padding:14px 16px; border-radius:10px; border:1px solid var(--line);
+    background: var(--bg-plum); color:var(--cream); font-family:'JetBrains Mono', monospace; font-size:14px; text-align:center;
+  }
+  #lockInput:focus{ outline:none; border-color: var(--marigold); }
+  #lockBtn{
+    padding:12px 30px; border-radius:10px; border:none; background: var(--marigold); color:#150F26;
+    font-family:'JetBrains Mono', monospace; font-size:13px; letter-spacing:1px; cursor:pointer; transition:opacity .2s;
+  }
+  #lockBtn:hover{ opacity:.85; }
+  #lockError{ color: var(--rose); font-size:12px; font-family:'JetBrains Mono', monospace; height:14px; }
 </style>
 </head>
 <body>
+
+<div id="lockScreen">
+  <div class="lock-star">✦</div>
+  <h2>Krishna's Universe</h2>
+  <p>This little universe is just for you. Enter the passcode to step in.</p>
+  <input type="password" id="lockInput" placeholder="Passcode" autocomplete="off">
+  <div id="lockError"></div>
+  <button id="lockBtn">ENTER ✦</button>
+</div>
 
 <canvas id="stars"></canvas>
 
@@ -1566,6 +1594,47 @@ articles.forEach((a)=>{
   });
   acc.appendChild(item);
 });
+
+/* ---------- PASSWORD LOCK (checked server-side — passcode never sits in this file) ---------- */
+(function(){
+  const lockScreen = document.getElementById('lockScreen');
+  const lockInput = document.getElementById('lockInput');
+  const lockBtn = document.getElementById('lockBtn');
+  const lockError = document.getElementById('lockError');
+
+  if(localStorage.getItem('universeUnlocked') === 'true'){
+    lockScreen.style.display = 'none';
+  } else {
+    document.body.style.overflow = 'hidden';
+  }
+
+  async function tryUnlock(){
+    lockBtn.disabled = true;
+    lockError.textContent = '';
+    try{
+      const res = await fetch('/api/check-passcode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ passcode: lockInput.value })
+      });
+      const data = await res.json();
+      if(data.ok){
+        localStorage.setItem('universeUnlocked', 'true');
+        lockScreen.style.display = 'none';
+        document.body.style.overflow = '';
+      } else {
+        lockError.textContent = 'That\'s not quite it — try again ✦';
+        lockInput.value = '';
+        lockInput.focus();
+      }
+    }catch(e){
+      lockError.textContent = 'Connection issue — try again ✦';
+    }
+    lockBtn.disabled = false;
+  }
+  lockBtn.addEventListener('click', tryUnlock);
+  lockInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') tryUnlock(); });
+})();
 
 </script>
 
