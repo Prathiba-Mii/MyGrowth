@@ -1297,7 +1297,7 @@ createTimer({
 
 /* ---------- HOW WAS MY DAY (DIARY) ---------- */
 (function(){
-  const STORAGE_KEY = 'krishnaUniverseDiaryEntries';
+  const STORAGE_KEY = 'diaryEntries';
   const dateEl = document.getElementById('diaryDate');
   const fields = {
     achievements: document.getElementById('diaryAchievements'),
@@ -1328,35 +1328,37 @@ createTimer({
     const [y,m,d] = key.split('-').map(Number);
     return new Date(y, m-1, d).toLocaleDateString(undefined, { weekday:'short', year:'numeric', month:'short', day:'numeric' });
   }
-  function loadAll(){
-    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
-    catch(e){ return {}; }
+  async function loadAll(){
+    return (await storageGet(STORAGE_KEY)) || {};
   }
-  function saveAll(data){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  async function saveAll(data){
+    await storageSet(STORAGE_KEY, data);
   }
 
   const key = todayKey();
   dateEl.textContent = prettyDate(key);
 
-  const all = loadAll();
-  if(all[key]){
-    Object.keys(fields).forEach(f => { fields[f].value = all[key][f] || ''; });
-  }
+  (async function init(){
+    const all = await loadAll();
+    if(all[key]){
+      Object.keys(fields).forEach(f => { fields[f].value = all[key][f] || ''; });
+    }
+    populatePastDropdown();
+  })();
 
-  saveBtn.addEventListener('click', ()=>{
-    const data = loadAll();
+  saveBtn.addEventListener('click', async ()=>{
+    const data = await loadAll();
     const entry = {};
     Object.keys(fields).forEach(f => { entry[f] = fields[f].value.trim(); });
     data[key] = entry;
-    saveAll(data);
+    await saveAll(data);
     savedMsg.classList.add('show');
     setTimeout(()=> savedMsg.classList.remove('show'), 2200);
     populatePastDropdown();
   });
 
-  function populatePastDropdown(){
-    const data = loadAll();
+  async function populatePastDropdown(){
+    const data = await loadAll();
     const keys = Object.keys(data).sort().reverse();
     pastSelect.innerHTML = '<option value="">— view a past entry —</option>';
     keys.forEach(k=>{
@@ -1367,12 +1369,11 @@ createTimer({
       pastSelect.appendChild(opt);
     });
   }
-  populatePastDropdown();
 
-  pastSelect.addEventListener('change', ()=>{
+  pastSelect.addEventListener('change', async ()=>{
     const chosen = pastSelect.value;
     if(!chosen){ pastView.style.display = 'none'; return; }
-    const data = loadAll();
+    const data = await loadAll();
     const e = data[chosen];
     if(!e){ pastView.style.display = 'none'; return; }
     pastDateLabel.textContent = prettyDate(chosen);
@@ -1389,7 +1390,7 @@ createTimer({
 
 /* ---------- GRATITUDE LIST ---------- */
 (function(){
-  const STORAGE_KEY = 'gratitudeList_v1';
+  const STORAGE_KEY = 'gratitudeEntries';
   const dateEl = document.getElementById('gratitudeDate');
   const saveBtn = document.getElementById('gratitudeSaveBtn');
   const savedMsg = document.getElementById('gratitudeSavedMsg');
@@ -1414,36 +1415,35 @@ createTimer({
     const [y,m,d] = key.split('-').map(Number);
     return new Date(y, m-1, d).toLocaleDateString(undefined, { weekday:'short', year:'numeric', month:'short', day:'numeric' });
   }
-  function loadAll(){
-    try{ return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
-    catch(e){ return {}; }
+  function loadTodayIntoFields(){
+    loadAll().then(all => {
+      Object.keys(fields).forEach(f => { fields[f].value = (all[currentKey] && all[currentKey][f]) || ''; });
+    });
   }
-  function saveAll(data){
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  async function loadAll(){
+    return (await storageGet(STORAGE_KEY)) || {};
+  }
+  async function saveAll(data){
+    await storageSet(STORAGE_KEY, data);
   }
 
   let currentKey = todayKey();
   dateEl.textContent = prettyDate(currentKey);
-
-  function loadTodayIntoFields(){
-    const all = loadAll();
-    Object.keys(fields).forEach(f => { fields[f].value = (all[currentKey] && all[currentKey][f]) || ''; });
-  }
   loadTodayIntoFields();
 
-  saveBtn.addEventListener('click', ()=>{
-    const data = loadAll();
+  saveBtn.addEventListener('click', async ()=>{
+    const data = await loadAll();
     const entry = {};
     Object.keys(fields).forEach(f => { entry[f] = fields[f].value.trim(); });
     data[currentKey] = entry;
-    saveAll(data);
+    await saveAll(data);
     savedMsg.classList.add('show');
     setTimeout(()=> savedMsg.classList.remove('show'), 2200);
     populatePastDropdown();
   });
 
-  function populatePastDropdown(){
-    const data = loadAll();
+  async function populatePastDropdown(){
+    const data = await loadAll();
     const keys = Object.keys(data).sort().reverse();
     pastSelect.innerHTML = '<option value="">— view a past list —</option>';
     keys.forEach(k=>{
@@ -1470,10 +1470,10 @@ createTimer({
   setInterval(checkForNewDay, 60000);
   document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) checkForNewDay(); });
 
-  pastSelect.addEventListener('change', ()=>{
+  pastSelect.addEventListener('change', async ()=>{
     const chosen = pastSelect.value;
     if(!chosen){ pastView.style.display = 'none'; return; }
-    const data = loadAll();
+    const data = await loadAll();
     const e = data[chosen];
     if(!e){ pastView.style.display = 'none'; return; }
     pastDateLabel.textContent = prettyDate(chosen);
